@@ -353,7 +353,7 @@ let tarefas = [];
 let responsaveis = ['Leonardo','Nicanor'];
 let currentPage = 'home';
 let currentObraId = null;
-let API_URL = localStorage.getItem('nk_api_url') || '';
+let API_URL = localStorage.getItem('nk_api_url') || 'https://script.google.com/macros/s/AKfycbxRAPLJ-IRRFl5tbRBocjl0R0hVnHKPZN1qAt9rGgpEKrgrlDIDpRzNvzg0NjJkdutXyQ/exec';
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -361,8 +361,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const hoje = new Date();
   document.getElementById('data-hoje').textContent = hoje.toLocaleDateString('pt-BR', {day:'numeric',month:'short'});
   document.getElementById('api-url').value = API_URL;
-  if (API_URL) carregarDados();
-  else renderHomeSemAPI();
+  carregarDados();
 });
 
 function salvarConfig() {
