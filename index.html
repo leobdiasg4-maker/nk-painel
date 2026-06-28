@@ -119,6 +119,14 @@
       </div>
       <button class="btn-primary" onclick="testarConexao()">Testar conexão</button>
       <button class="btn-secondary" onclick="recarregarTudo()">Recarregar dados</button>
+      <div class="stat-card" style="margin-top:12px">
+        <div style="font-size:14px;font-weight:600;margin-bottom:10px">Responsáveis</div>
+        <div id="lista-responsaveis" style="margin-bottom:10px"></div>
+        <div style="display:flex;gap:8px">
+          <input class="form-input" id="novo-responsavel" placeholder="Nome do responsável" style="flex:1">
+          <button onclick="adicionarResponsavel()" style="padding:10px 14px;border-radius:10px;background:var(--accent);color:#fff;border:none;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap">+ Add</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -267,7 +275,7 @@ async function carregarDados() {
     const [o, t, r] = await Promise.all([api({action:'getObras'}), api({action:'getAllTarefas'}), api({action:'getResponsaveis'})]);
     obras = o; tarefas = t;
     if (r && r.length) responsaveis = r;
-    renderHome(); renderObras(); preencherSelects();
+    renderHome(); renderObras(); preencherSelects(); renderResponsaveis();
   } catch(e) {
     document.getElementById('home-content').innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">Erro ao carregar.<br><small>'+e.message+'</small><br><br>Vá em ⚙️ e teste a conexão.</div></div>';
   }
@@ -547,6 +555,39 @@ async function excluirTarefa() {
     fecharModal('modal-tarefa'); renderHome();
     if (currentPage==='detail'&&currentObraId) { const obra=obras.find(o=>o.ID===currentObraId); if(obra) renderDetalheObra(obra); }
   } catch(e) { alert('Erro: '+e.message); }
+}
+
+function renderResponsaveis() {
+  const el = document.getElementById('lista-responsaveis');
+  if (!el) return;
+  if (!responsaveis.length) { el.innerHTML = '<div style="font-size:13px;color:var(--text3)">Nenhum responsável cadastrado.</div>'; return; }
+  el.innerHTML = responsaveis.map(r =>
+    '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;background:var(--surface2);border-radius:8px;margin-bottom:6px">'
+    +'<span style="font-size:14px">'+r+'</span>'
+    +'<button onclick="removerResponsavel(''+r+'')" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:13px;padding:2px 6px">✕</button>'
+    +'</div>'
+  ).join('');
+}
+
+async function adicionarResponsavel() {
+  const input = document.getElementById('novo-responsavel');
+  const nome = input.value.trim();
+  if (!nome) { alert('Digite um nome.'); return; }
+  if (responsaveis.includes(nome)) { alert('Já existe.'); return; }
+  try {
+    await api({action:'addResponsavel', nome});
+    responsaveis.push(nome);
+    input.value = '';
+    preencherSelects();
+    renderResponsaveis();
+  } catch(e) { alert('Erro: '+e.message); }
+}
+
+async function removerResponsavel(nome) {
+  if (!confirm('Remover "'+nome+'" da lista?')) return;
+  responsaveis = responsaveis.filter(r => r !== nome);
+  preencherSelects();
+  renderResponsaveis();
 }
 
 function fecharModal(id) { document.getElementById(id).classList.remove('open'); }
