@@ -330,6 +330,704 @@
       <textarea class="form-input" id="tarefa-obs" placeholder="Detalhes..."></textarea>
     </div>
     <button class="btn-primary" onclick="salvarTarefa()">Salvar tarefa</button>
+    <button id="btn-excluir-tarefa" onclick="excluirTarefa()" style="display:none;width:100%;padding:12px;border-radius:12px;background:var(--red-bg);color:var(--red);border:none;font-size:15px;font-weight:500;cursor:pointer;margin-top:8px;">Excluir tarefa</button>
+    <button class="btn-secondary" onclick="fecharModal('modal-tarefa')">Cancelar</button>
+  </div>
+</div>
+
+<!-- MODAL SHARE -->
+<div class="modal-overlay" id="modal-share">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">Compartilhar resumo</div>
+    <textarea class="form-input" id="share-text" style="min-height:200px;font-size:13px;" readonly></textarea>
+    <button class="btn-primary" onclick="copiarShare()">Copiar texto</button>
+    <button class="btn-secondary" onclick="fecharModal('modal-share')">Fechar</button>
+  </div>
+</div>
+
+<script>
+// ─── ESTADO ───────────────────────────────────────────────────────────────────
+let obras = [];
+let tarefas = [];
+let responsaveis = ['Leonardo','Nicanor'];
+let currentPage = 'home';
+let currentObraId = null;
+let API_URL = localStorage.getItem('nk_api_url') || 'https://script.google.com/macros/s/AKfycbxRAPLJ-IRRFl5tbRBocjl0R0hVnHKPZN1qAt9rGgpEKrgrlDIDpRzNvzg0NjJkdutXyQ/exec';
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  // Data de hoje
+  const hoje = new Date();
+  document.getElementById('data-hoje').textContent = hoje.toLocaleDateString('pt-BR', {day:'numeric',month:'short'});
+  document.getElementById('api-url').value = API_URL;
+  carregarDados();
+});
+
+function salvarConfig() {
+  API_URL = document.getElementById('api-url').value.trim();
+  localStorage.setItem('nk_api_url', API_URL);
+}
+
+// ─── NAVEGAÇÃO ────────────────────────────────────────────────────────────────
+function navTo(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  document.getElementById('nav-' + page)?.classList.add('active');
+  currentPage = page;
+
+  const topSub = document.getElementById('topbar-sub');
+  const topLeft = document.getElementById('topbar-left');
+
+  if (page === 'home') {
+    topLeft.innerHTML = `<span class="topbar-title">NK Painel</span><span class="topbar-sub" id="topbar-sub">Hoje, <span id="data-hoje"></span></span>`;
+    const hoje = new Date();
+    document.getElementById('data-hoje').textContent = hoje.toLocaleDateString('pt-BR', {day:'numeric',month:'short'});
+    document.getElementById('fab').style.display = 'none';
+  } else if (page === 'obras') {
+    topLeft.innerHTML = `<span class="topbar-title">Obras</span><span class="topbar-sub">${obras.length} ativas</span>`;
+    document.getElementById('fab').style.display = 'flex';
+    renderObras();
+  } else if (page === 'config') {
+    topLeft.innerHTML = `<span class="topbar-title">Configurações</span>`;
+    document.getElementById('fab').style.display = 'none';
+  }
+}
+
+function fabClick() {
+  if (currentPage === 'obras') abrirModalObra();
+  else if (currentPage === 'detail') abrirModalTarefa(currentObraId);
+}
+
+// ─── API ──────────────────────────────────────────────────────────────────────
+async function api(params) {
+  if (!API_URL) throw new Error('URL não configurada');
+  const url = API_URL + '?' + new URLSearchParams(params).toString();
+  const res = await fetch(url);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+async function carregarDados() {
+  try {
+    const [o, t, r] = await Promise.all([
+      api({action:'getObras'}),
+      api({action:'getAllTarefas'}),
+      api({action:'getResponsaveis'})
+    ]);
+    obras = o;
+    tarefas = t;
+    if (r && r.length) responsaveis = r;
+    renderHome();
+    renderObras();
+    preencherSelects();
+  } catch(e) {
+    document.getElementById('home-content').innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">Erro ao carregar.<br><small>${e.message}</small><br><br>Configure a URL em ⚙️</div></div>`;
+  }
+}
+
+function recarregarTudo() { if(API_URL) carregarDados(); }
+
+async function testarConexao() {
+  const el = document.getElementById('conn-status');
+  el.textContent = 'Testando...';
+  try {
+    const r = await api({action:'getObras'});
+    el.textContent = `✅ Conectado — ${r.length} obras encontradas`;
+    el.style.color = 'var(--accent)';
+    carregarDados();
+  } catch(e) {
+    el.textContent = '❌ Erro: ' + e.message;
+    el.style.color = 'var(--red)';
+  }
+}
+
+async function setupPlanilha() {
+  try {
+    document.getElementById('conn-status').textContent = 'Configurando...';
+    const r = await api({action:'setup'});
+    document.getElementById('conn-status').textContent = '✅ ' + r.message;
+    document.getElementById('conn-status').style.color = 'var(--accent)';
+    setTimeout(carregarDados, 1000);
+  } catch(e) {
+    document.getElementById('conn-status').textContent = '❌ ' + e.message;
+    document.getElementById('conn-status').style.color = 'var(--red)';
+  }
+}
+
+// ─── HOME ─────────────────────────────────────────────────────────────────────
+function renderHomeSemAPI() {
+  document.getElementById('home-content').innerHTML = `
+    <div class="empty">
+      <div class="empty-icon">🔧</div>
+      <div class="empty-text">Configure a URL do Apps Script em ⚙️<br><small style="color:var(--text3)">Depois clique em Testar conexão</small></div>
+    </div>`;
+}
+
+function renderHome() {
+  const hoje = new Date();
+  hoje.setHours(0,0,0,0);
+
+  const comData = tarefas.filter(t => t.Status !== 'Concluida' && t.DataLimite).sort((a,b) => new Date(a.DataLimite) - new Date(b.DataLimite));
+  const semData = tarefas.filter(t => t.Status !== 'Concluida' && !t.DataLimite);
+  const concluidas = tarefas.filter(t => t.Status === 'Concluida');
+
+  // Stats
+  const vencidas = comData.filter(t => new Date(t.DataLimite) < hoje).length;
+  const hoje_ = comData.filter(t => {
+    const d = new Date(t.DataLimite); d.setHours(0,0,0,0);
+    return d.getTime() === hoje.getTime();
+  }).length;
+
+  let html = `
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-n">${obras.length}</div><div class="stat-label">Obras ativas</div></div>
+      <div class="stat-card"><div class="stat-n" style="color:${vencidas+hoje_>0?'var(--red)':'var(--text)'}">${vencidas+hoje_}</div><div class="stat-label">Ações urgentes</div></div>
+    </div>`;
+
+  if (comData.length) {
+    html += `<div class="sec-header"><span class="sec-title">Com prazo</span><span class="sec-count">${comData.length}</span></div>`;
+    comData.forEach(t => { html += renderTarefaCard(t, hoje); });
+  }
+
+  if (semData.length) {
+    html += `<div class="sec-divider"><div class="sec-divider-line"></div><span class="sec-divider-text">Sem data definida</span><div class="sec-divider-line"></div></div>`;
+    html += `<div class="sec-header"><span class="sec-title">Pendentes</span><span class="sec-count">${semData.length}</span></div>`;
+    semData.forEach(t => { html += renderTarefaCard(t, hoje); });
+  }
+
+  if (!comData.length && !semData.length) {
+    html += `<div class="empty"><div class="empty-icon">✅</div><div class="empty-text">Nenhuma tarefa pendente!<br>Adicione tarefas nas obras.</div></div>`;
+  }
+
+  document.getElementById('home-content').innerHTML = html;
+}
+
+function renderTarefaCard(t, hoje) {
+  const obra = obras.find(o => o.ID === t.ObraID);
+  const obraLabel = obra ? `${obra.Unidade} — ${obra.Descricao}` : t.ObraID;
+
+  let dateLabel = '', dateClass = 'ok';
+  if (t.DataLimite) {
+    const d = new Date(t.DataLimite); d.setHours(0,0,0,0);
+    const diff = Math.round((d - hoje) / 86400000);
+    if (diff < 0) { dateLabel = `Venceu há ${Math.abs(diff)}d`; dateClass = 'red'; }
+    else if (diff === 0) { dateLabel = 'Hoje'; dateClass = 'red'; }
+    else if (diff === 1) { dateLabel = 'Amanhã'; dateClass = 'future'; }
+    else { dateLabel = d.toLocaleDateString('pt-BR', {day:'numeric',month:'short'}); dateClass = diff <= 7 ? 'future' : 'ok'; }
+  }
+
+  const tipoCls = { Campo:'tipo-campo', Compra:'tipo-compra', Administrativo:'tipo-admin', Cliente:'tipo-cliente' }[t.Tipo] || 'tipo-admin';
+  const concluida = t.Status === 'Concluida' ? 'concluida' : '';
+
+  return `<div class="tarefa-card ${concluida}" onclick="abrirObra('${t.ObraID}')">
+    <div class="tarefa-obra">${obraLabel}</div>
+    <div class="tarefa-desc">${t.Descricao}</div>
+    <div class="tarefa-footer">
+      <span class="tipo-chip ${tipoCls}">${t.Tipo}</span>
+      ${dateLabel ? `<span class="tarefa-date ${dateClass}">${dateLabel}</span>` : ''}
+      <span style="font-size:12px;color:var(--text3);margin-left:auto">${t.Responsavel||''}</span>
+    </div>
+  </div>`;
+}
+
+// ─── OBRAS ────────────────────────────────────────────────────────────────────
+const STATUS_CONFIG = {
+  'Orcamento em aberto':  { cls: 'badge-blue',  dot: '' },
+  'Aguardando SESMT':     { cls: 'badge-amber', dot: '' },
+  'Aprovado - Nao iniciado': { cls: 'badge-gray', dot: '' },
+  'Em execucao':          { cls: 'badge-green', dot: '' },
+  'Finalizacao':          { cls: 'badge-amber', dot: '' },
+  'Entregue':             { cls: 'badge-gray',  dot: '' },
+  'Cancelado':            { cls: 'badge-red',   dot: '' },
+};
+
+function renderObras() {
+  if (!obras.length) {
+    document.getElementById('obras-content').innerHTML = `<div class="empty"><div class="empty-icon">🏗️</div><div class="empty-text">Nenhuma obra cadastrada.<br>Toque em + para adicionar.</div></div>`;
+    return;
+  }
+
+  const grupos = {
+    'Em execucao': [], 'Finalizacao': [], 'Aprovado - Nao iniciado': [],
+    'Orcamento em aberto': [], 'Aguardando SESMT': [], 'Entregue': [], 'Cancelado': []
+  };
+
+  obras.forEach(o => {
+    const g = grupos[o.Status];
+    if (g) g.push(o); else grupos['Entregue'].push(o);
+  });
+
+  const prioridade = ['Em execucao','Finalizacao','Aguardando SESMT','Aprovado - Nao iniciado','Orcamento em aberto','Entregue','Cancelado'];
+  const labels = {
+    'Em execucao':'Em execução','Finalizacao':'Finalização','Aprovado - Nao iniciado':'Aprovado — não iniciado',
+    'Orcamento em aberto':'Orçamento em aberto','Aguardando SESMT':'Aguardando SESMT',
+    'Entregue':'Entregue','Cancelado':'Cancelado'
+  };
+
+  let html = '';
+  prioridade.forEach(status => {
+    const grupo = grupos[status];
+    if (!grupo || !grupo.length) return;
+    html += `<div class="sec-header"><span class="sec-title">${labels[status]}</span><span class="sec-count">${grupo.length}</span></div>`;
+    grupo.forEach(o => {
+      const nTarefas = tarefas.filter(t => t.ObraID === o.ID && t.Status !== 'Concluida').length;
+      const cfg = STATUS_CONFIG[o.Status] || { cls:'badge-gray' };
+      html += `<div class="card" onclick="abrirObra('${o.ID}')">
+        <div class="card-header">
+          <span class="card-local">${o.Unidade}</span>
+          <span class="badge ${cfg.cls}">${labels[o.Status]||o.Status}</span>
+        </div>
+        <div class="card-desc">${o.Descricao}</div>
+        <div class="card-footer">
+          <span class="badge badge-gray">${o.Origem||''}</span>
+          ${o.Contato ? `<span class="badge badge-gray">${o.Contato}</span>` : ''}
+          ${nTarefas > 0 ? `<span class="badge badge-amber" style="margin-left:auto">${nTarefas} tarefa${nTarefas>1?'s':''}</span>` : ''}
+        </div>
+      </div>`;
+    });
+  });
+
+  document.getElementById('obras-content').innerHTML = html;
+}
+
+// ─── DETALHE OBRA ─────────────────────────────────────────────────────────────
+function abrirObra(obraId) {
+  currentObraId = obraId;
+  const obra = obras.find(o => o.ID === obraId);
+  if (!obra) return;
+
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-detail').classList.add('active');
+  document.getElementById('fab').style.display = 'flex';
+
+  const topLeft = document.getElementById('topbar-left');
+  topLeft.innerHTML = `<button class="back-btn" onclick="voltarObras()">← Obras</button>`;
+  currentPage = 'detail';
+
+  renderDetalheObra(obra);
+}
+
+function voltarObras() {
+  currentObraId = null;
+  navTo('obras');
+}
+
+function renderDetalheObra(obra) {
+  const obraTarefas = tarefas.filter(t => t.ObraID === obra.ID);
+  const pendentes = obraTarefas.filter(t => t.Status !== 'Concluida');
+  const concluidas = obraTarefas.filter(t => t.Status === 'Concluida');
+
+  const statusLabels = {
+    'Orcamento em aberto':'Orçamento em aberto','Aguardando SESMT':'Aguardando SESMT',
+    'Aprovado - Nao iniciado':'Aprovado — não iniciado','Em execucao':'Em execução',
+    'Finalizacao':'Finalização','Entregue':'Entregue','Cancelado':'Cancelado'
+  };
+
+  const tipos = ['Campo','Compra','Administrativo','Cliente'];
+  const tipoCls = { Campo:'tipo-campo', Compra:'tipo-compra', Administrativo:'tipo-admin', Cliente:'tipo-cliente' };
+
+  let html = `
+    <div class="detail-header">
+      <div class="detail-title">${obra.Unidade}</div>
+      <div class="detail-sub">${obra.Descricao}</div>
+      <div class="detail-meta">
+        <div class="meta-item"><div class="meta-label">Status</div><div class="meta-value">${statusLabels[obra.Status]||obra.Status}</div></div>
+        <div class="meta-item"><div class="meta-label">Origem</div><div class="meta-value">${obra.Origem||'—'}</div></div>
+        <div class="meta-item"><div class="meta-label">Contato</div><div class="meta-value">${obra.Contato||'—'}</div></div>
+        <div class="meta-item"><div class="meta-label">Responsável</div><div class="meta-value">${obra.Responsavel||'—'}</div></div>
+        ${obra.RC ? `<div class="meta-item"><div class="meta-label">RC</div><div class="meta-value">${obra.RC}</div></div>` : ''}
+        ${obra.Pedido ? `<div class="meta-item"><div class="meta-label">Pedido</div><div class="meta-value">${obra.Pedido}</div></div>` : ''}
+        ${obra.NotaFiscal ? `<div class="meta-item"><div class="meta-label">NF</div><div class="meta-value">${obra.NotaFiscal}</div></div>` : ''}
+      </div>
+      ${obra.Observacoes ? `<div style="margin-top:10px;font-size:13px;color:var(--text2);background:var(--surface2);border-radius:8px;padding:8px 10px;">${obra.Observacoes}</div>` : ''}
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="btn-secondary" style="flex:1;margin:0;" onclick="editarObra('${obra.ID}')">Editar obra</button>
+        <button class="btn-primary" style="flex:1;margin:0;" onclick="abrirModalTarefa('${obra.ID}')">+ Tarefa</button>
+      </div>
+    </div>`;
+
+  // Tarefas por tipo
+  if (pendentes.length) {
+    html += `<div class="sec-header"><span class="sec-title">Tarefas pendentes</span><span class="sec-count">${pendentes.length}</span></div>`;
+    tipos.forEach(tipo => {
+      const grupo = pendentes.filter(t => t.Tipo === tipo);
+      if (!grupo.length) return;
+      html += `<div class="sec-divider"><div class="sec-divider-line"></div><span class="sec-divider-text ${tipoCls[tipo]}" style="border-radius:6px;padding:2px 8px;">${tipo}</span><div class="sec-divider-line"></div></div>`;
+      grupo.forEach(t => { html += renderTarefaDetalhe(t); });
+    });
+  } else {
+    html += `<div class="empty" style="padding:24px"><div class="empty-text" style="font-size:14px">Nenhuma tarefa pendente.<br><small>Toque em + Tarefa para adicionar.</small></div></div>`;
+  }
+
+  if (concluidas.length) {
+    html += `<div class="sec-divider"><div class="sec-divider-line"></div><span class="sec-divider-text">Concluídas (${concluidas.length})</span><div class="sec-divider-line"></div></div>`;
+    concluidas.forEach(t => { html += renderTarefaDetalhe(t); });
+  }
+
+  document.getElementById('detail-content').innerHTML = html;
+}
+
+function renderTarefaDetalhe(t) {
+  const concluida = t.Status === 'Concluida';
+  const checkCls = concluida ? 'done' : '';
+  let dateStr = '';
+  if (t.DataLimite) {
+    const d = new Date(t.DataLimite);
+    dateStr = d.toLocaleDateString('pt-BR', {day:'numeric',month:'short'});
+  }
+  return `<div class="tarefa-card ${concluida ? 'concluida' : ''}">
+    <div style="display:flex;align-items:flex-start;gap:10px;">
+      <div class="check-circle ${checkCls}" onclick="toggleTarefa('${t.ID}')">
+        ${concluida ? '✓' : ''}
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div class="tarefa-desc" style="${concluida?'text-decoration:line-through':''}">${t.Descricao}</div>
+        ${t.Observacoes ? `<div style="font-size:12px;color:var(--text3);margin-top:2px">${t.Observacoes}</div>` : ''}
+        <div class="tarefa-footer" style="margin-top:6px">
+          ${dateStr ? `<span style="font-size:12px;color:var(--text3)">${dateStr}</span>` : ''}
+          <span style="font-size:12px;color:var(--text3)">${t.Responsavel||''}</span>
+          <button onclick="editarTarefa('${t.ID}')" style="margin-left:auto;background:none;border:none;font-size:12px;color:var(--text3);cursor:pointer;padding:2px 6px;border-radius:6px;border:0.5px solid var(--border)">✏️ editar</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}ml>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>NK Painel Operacional</title>
+<style>
+  :root {
+    --bg: #f5f4f0;
+    --surface: #ffffff;
+    --surface2: #f9f8f5;
+    --border: rgba(0,0,0,0.1);
+    --border-strong: rgba(0,0,0,0.18);
+    --text: #1a1a18;
+    --text2: #5a5a56;
+    --text3: #8a8a84;
+    --accent: #1a6b3a;
+    --accent-bg: #e8f5ee;
+    --accent-text: #1a6b3a;
+    --red: #c0392b;
+    --red-bg: #fdecea;
+    --amber: #b45309;
+    --amber-bg: #fef3cd;
+    --blue: #1a5276;
+    --blue-bg: #eaf2fb;
+    --gray-bg: #f0efeb;
+    --radius: 12px;
+    --nav-h: 60px;
+    --top-h: 56px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; max-width: 480px; margin: 0 auto; position: relative; }
+
+  /* TOP BAR */
+  .topbar { position: fixed; top: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 480px; height: var(--top-h); background: var(--surface); border-bottom: 0.5px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; z-index: 100; }
+  .topbar-title { font-size: 17px; font-weight: 600; color: var(--text); }
+  .topbar-sub { font-size: 12px; color: var(--text3); margin-top: 1px; }
+  .topbar-left { display: flex; flex-direction: column; }
+  .btn-icon { width: 36px; height: 36px; border-radius: 50%; border: none; background: var(--surface2); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 18px; color: var(--text2); }
+
+  /* NAV */
+  .nav { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 480px; height: var(--nav-h); background: var(--surface); border-top: 0.5px solid var(--border); display: flex; z-index: 100; }
+  .nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; cursor: pointer; border: none; background: none; color: var(--text3); font-size: 11px; font-weight: 500; transition: color 0.15s; padding: 8px 4px; }
+  .nav-item.active { color: var(--accent); }
+  .nav-icon { font-size: 22px; line-height: 1; }
+
+  /* CONTENT */
+  .content { padding-top: calc(var(--top-h) + 12px); padding-bottom: calc(var(--nav-h) + 12px); min-height: 100vh; }
+  .page { display: none; padding: 0 12px; }
+  .page.active { display: block; }
+
+  /* SECTION HEADER */
+  .sec-header { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 10px; }
+  .sec-title { font-size: 13px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.06em; }
+  .sec-count { font-size: 12px; color: var(--text3); background: var(--gray-bg); border-radius: 20px; padding: 2px 8px; }
+
+  /* CARDS */
+  .card { background: var(--surface); border-radius: var(--radius); border: 0.5px solid var(--border); padding: 14px 16px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s; }
+  .card:active { border-color: var(--border-strong); }
+  .card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+  .card-local { font-size: 15px; font-weight: 600; color: var(--text); line-height: 1.3; flex: 1; }
+  .card-desc { font-size: 13px; color: var(--text2); margin-bottom: 8px; line-height: 1.4; }
+  .card-next { font-size: 13px; color: var(--text); background: var(--surface2); border-radius: 8px; padding: 7px 10px; border-left: 3px solid var(--border-strong); }
+  .card-next-label { font-size: 11px; color: var(--text3); margin-bottom: 2px; font-weight: 500; }
+  .card-footer { display: flex; align-items: center; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+
+  /* BADGES */
+  .badge { font-size: 11px; font-weight: 500; padding: 3px 8px; border-radius: 20px; white-space: nowrap; }
+  .badge-red { background: var(--red-bg); color: var(--red); }
+  .badge-amber { background: var(--amber-bg); color: var(--amber); }
+  .badge-green { background: var(--accent-bg); color: var(--accent-text); }
+  .badge-blue { background: var(--blue-bg); color: var(--blue); }
+  .badge-gray { background: var(--gray-bg); color: var(--text2); }
+
+  /* URGENCY DOT */
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+  .dot-red { background: var(--red); }
+  .dot-amber { background: var(--amber); }
+  .dot-green { background: #27ae60; }
+
+  /* TAREFA CARDS */
+  .tarefa-card { background: var(--surface); border-radius: 10px; border: 0.5px solid var(--border); padding: 12px 14px; margin-bottom: 6px; cursor: pointer; }
+  .tarefa-obra { font-size: 11px; color: var(--text3); margin-bottom: 2px; }
+  .tarefa-desc { font-size: 14px; font-weight: 500; color: var(--text); margin-bottom: 6px; }
+  .tarefa-footer { display: flex; align-items: center; gap: 6px; }
+  .tarefa-date { font-size: 12px; color: var(--red); font-weight: 500; }
+  .tarefa-date.future { color: var(--amber); }
+  .tarefa-date.ok { color: var(--text3); }
+
+  /* EMPTY STATE */
+  .empty { text-align: center; padding: 48px 24px; color: var(--text3); }
+  .empty-icon { font-size: 40px; margin-bottom: 12px; }
+  .empty-text { font-size: 15px; }
+
+  /* LOADING */
+  .loading { text-align: center; padding: 48px; color: var(--text3); font-size: 15px; }
+
+  /* FAB */
+  .fab { position: fixed; bottom: calc(var(--nav-h) + 16px); right: 16px; width: 52px; height: 52px; border-radius: 50%; background: var(--accent); border: none; color: #fff; font-size: 26px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 12px rgba(26,107,58,0.3); z-index: 90; }
+
+  /* MODAL */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 200; display: none; align-items: flex-end; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--surface); border-radius: 20px 20px 0 0; width: 100%; max-width: 480px; margin: 0 auto; padding: 20px 16px 32px; max-height: 90vh; overflow-y: auto; }
+  .modal-handle { width: 36px; height: 4px; background: var(--border-strong); border-radius: 2px; margin: 0 auto 16px; }
+  .modal-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: var(--text); }
+  .form-group { margin-bottom: 14px; }
+  .form-label { font-size: 13px; font-weight: 500; color: var(--text2); margin-bottom: 5px; display: block; }
+  .form-input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 0.5px solid var(--border-strong); background: var(--surface2); font-size: 15px; color: var(--text); font-family: inherit; outline: none; }
+  .form-input:focus { border-color: var(--accent); }
+  select.form-input { -webkit-appearance: none; appearance: none; }
+  textarea.form-input { resize: none; min-height: 72px; }
+  .btn-primary { width: 100%; padding: 14px; border-radius: 12px; background: var(--accent); color: #fff; border: none; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 4px; }
+  .btn-secondary { width: 100%; padding: 12px; border-radius: 12px; background: var(--gray-bg); color: var(--text2); border: none; font-size: 15px; font-weight: 500; cursor: pointer; margin-top: 8px; }
+  .modal-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  /* OBRA DETAIL */
+  .detail-header { background: var(--surface); border-radius: var(--radius); border: 0.5px solid var(--border); padding: 16px; margin-bottom: 12px; }
+  .detail-title { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+  .detail-sub { font-size: 14px; color: var(--text2); margin-bottom: 12px; }
+  .detail-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .meta-item { background: var(--surface2); border-radius: 8px; padding: 8px 10px; }
+  .meta-label { font-size: 11px; color: var(--text3); margin-bottom: 2px; }
+  .meta-value { font-size: 13px; font-weight: 500; color: var(--text); }
+  .back-btn { display: flex; align-items: center; gap: 6px; background: none; border: none; color: var(--accent); font-size: 15px; font-weight: 500; cursor: pointer; padding: 4px 0 12px; }
+
+  /* STATUS CHIPS */
+  .status-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 20px; }
+
+  /* SHARE BTN */
+  .share-btn { display: flex; align-items: center; gap: 6px; background: var(--surface2); border: 0.5px solid var(--border); border-radius: 10px; padding: 10px 14px; cursor: pointer; font-size: 14px; color: var(--text2); width: 100%; margin-bottom: 12px; }
+
+  /* STATS */
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+  .stat-card { background: var(--surface); border-radius: var(--radius); border: 0.5px solid var(--border); padding: 14px; }
+  .stat-n { font-size: 26px; font-weight: 700; color: var(--text); }
+  .stat-label { font-size: 12px; color: var(--text3); margin-top: 2px; }
+
+  /* SECTION DIVIDER */
+  .sec-divider { display: flex; align-items: center; gap: 10px; margin: 16px 0 10px; }
+  .sec-divider-line { flex: 1; height: 0.5px; background: var(--border); }
+  .sec-divider-text { font-size: 12px; color: var(--text3); font-weight: 500; white-space: nowrap; }
+
+  .tipo-chip { display: inline-flex; font-size: 11px; padding: 2px 7px; border-radius: 6px; font-weight: 500; }
+  .tipo-campo { background: #e8f5ee; color: #1a6b3a; }
+  .tipo-compra { background: #fef3cd; color: #b45309; }
+  .tipo-admin { background: #eaf2fb; color: #1a5276; }
+  .tipo-cliente { background: #fdecea; color: #c0392b; }
+
+  .check-circle { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border-strong); display: flex; align-items: center; justify-content: center; flex-shrink: 0; cursor: pointer; font-size: 13px; }
+  .check-circle.done { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  /* Concluídas */
+  .tarefa-card.concluida { opacity: 0.5; }
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="topbar-left" id="topbar-left">
+    <span class="topbar-title">NK Painel</span>
+    <span class="topbar-sub" id="topbar-sub">Hoje, <span id="data-hoje"></span></span>
+  </div>
+  <button class="btn-icon" onclick="openShare()" title="Compartilhar">📤</button>
+</div>
+
+<!-- CONTENT -->
+<div class="content">
+
+  <!-- HOME -->
+  <div class="page active" id="page-home">
+    <div id="home-content"><div class="loading">Carregando...</div></div>
+  </div>
+
+  <!-- OBRAS -->
+  <div class="page" id="page-obras">
+    <div id="obras-content"><div class="loading">Carregando...</div></div>
+  </div>
+
+  <!-- OBRA DETAIL -->
+  <div class="page" id="page-detail">
+    <div id="detail-content"></div>
+  </div>
+
+  <!-- CONFIG -->
+  <div class="page" id="page-config">
+    <div style="padding: 8px 4px;">
+      <div class="stat-card" style="margin-bottom:12px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:8px;">URL do Apps Script</div>
+        <input class="form-input" id="api-url" placeholder="Cole aqui a URL da implantação..." style="font-size:13px;" oninput="salvarConfig()">
+        <div style="font-size:12px;color:var(--text3);margin-top:6px;">Cole a URL gerada em Implantar &gt; Gerenciar implantações</div>
+      </div>
+      <div class="stat-card" style="margin-bottom:12px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Status da conexão</div>
+        <div style="font-size:13px;color:var(--text3);" id="conn-status">—</div>
+      </div>
+      <button class="btn-primary" onclick="testarConexao()">Testar conexão</button>
+      <button class="btn-secondary" onclick="recarregarTudo()">Recarregar dados</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- NAV -->
+<nav class="nav">
+  <button class="nav-item active" onclick="navTo('home')" id="nav-home">
+    <span class="nav-icon">🏠</span>
+    <span>Hoje</span>
+  </button>
+  <button class="nav-item" onclick="navTo('obras')" id="nav-obras">
+    <span class="nav-icon">🏗️</span>
+    <span>Obras</span>
+  </button>
+  <button class="nav-item" onclick="navTo('config')" id="nav-config">
+    <span class="nav-icon">⚙️</span>
+    <span>Config</span>
+  </button>
+</nav>
+
+<!-- FAB -->
+<button class="fab" id="fab" onclick="fabClick()">＋</button>
+
+<!-- MODAL NOVA OBRA -->
+<div class="modal-overlay" id="modal-obra">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="obra-modal-title">Nova obra</div>
+    <input type="hidden" id="obra-id-edit">
+    <div class="form-group">
+      <label class="form-label">Unidade *</label>
+      <input class="form-input" id="obra-unidade" placeholder="ex: Guarulhos, Leme...">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Descrição *</label>
+      <input class="form-input" id="obra-desc" placeholder="ex: Manutenção Telhado">
+    </div>
+    <div class="modal-row">
+      <div class="form-group">
+        <label class="form-label">Tipo</label>
+        <select class="form-input" id="obra-tipo">
+          <option>Servico</option>
+          <option>Orcamento</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Origem</label>
+        <select class="form-input" id="obra-origem">
+          <option>Cogna</option>
+          <option>Unidade</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Status</label>
+      <select class="form-input" id="obra-status">
+        <option>Orcamento em aberto</option>
+        <option>Aguardando SESMT</option>
+        <option>Aprovado - Nao iniciado</option>
+        <option>Em execucao</option>
+        <option>Finalizacao</option>
+        <option>Entregue</option>
+        <option>Cancelado</option>
+      </select>
+    </div>
+    <div class="modal-row">
+      <div class="form-group">
+        <label class="form-label">Contato</label>
+        <input class="form-input" id="obra-contato" placeholder="Manoel, Ana...">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Responsável</label>
+        <select class="form-input" id="obra-responsavel"></select>
+      </div>
+    </div>
+    <div class="modal-row">
+      <div class="form-group">
+        <label class="form-label">RC</label>
+        <input class="form-input" id="obra-rc" placeholder="Opcional">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Pedido</label>
+        <input class="form-input" id="obra-pedido" placeholder="Opcional">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Nota Fiscal</label>
+      <input class="form-input" id="obra-nf" placeholder="Opcional">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Observações</label>
+      <textarea class="form-input" id="obra-obs" placeholder="Notas gerais sobre a obra..."></textarea>
+    </div>
+    <button class="btn-primary" onclick="salvarObra()">Salvar obra</button>
+    <button class="btn-secondary" onclick="fecharModal('modal-obra')">Cancelar</button>
+  </div>
+</div>
+
+<!-- MODAL NOVA TAREFA -->
+<div class="modal-overlay" id="modal-tarefa">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">Nova tarefa</div>
+    <input type="hidden" id="tarefa-obra-id">
+    <div class="form-group">
+      <label class="form-label">Descrição *</label>
+      <input class="form-input" id="tarefa-desc" placeholder="O que precisa ser feito?">
+    </div>
+    <div class="modal-row">
+      <div class="form-group">
+        <label class="form-label">Tipo</label>
+        <select class="form-input" id="tarefa-tipo">
+          <option>Campo</option>
+          <option>Compra</option>
+          <option>Administrativo</option>
+          <option>Cliente</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Responsável</label>
+        <select class="form-input" id="tarefa-responsavel"></select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Data limite</label>
+      <input class="form-input" type="date" id="tarefa-data">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Observações</label>
+      <textarea class="form-input" id="tarefa-obs" placeholder="Detalhes..."></textarea>
+    </div>
+    <button class="btn-primary" onclick="salvarTarefa()">Salvar tarefa</button>
+    <button id="btn-excluir-tarefa" onclick="excluirTarefa()" style="display:none;width:100%;padding:12px;border-radius:12px;background:var(--red-bg);color:var(--red);border:none;font-size:15px;font-weight:500;cursor:pointer;margin-top:8px;">Excluir tarefa</button>
     <button class="btn-secondary" onclick="fecharModal('modal-tarefa')">Cancelar</button>
   </div>
 </div>
@@ -781,15 +1479,19 @@ async function salvarObra() {
 }
 
 function abrirModalTarefa(obraId) {
+  document.getElementById('tarefa-id-edit').value = '';
   document.getElementById('tarefa-obra-id').value = obraId;
   document.getElementById('tarefa-desc').value = '';
   document.getElementById('tarefa-obs').value = '';
   document.getElementById('tarefa-data').value = '';
+  document.getElementById('tarefa-modal-title').textContent = 'Nova tarefa';
+  document.getElementById('btn-excluir-tarefa').style.display = 'none';
   preencherSelects();
   document.getElementById('modal-tarefa').classList.add('open');
 }
 
 async function salvarTarefa() {
+  const id = document.getElementById('tarefa-id-edit').value;
   const params = {
     obraId: document.getElementById('tarefa-obra-id').value,
     descricao: document.getElementById('tarefa-desc').value.trim(),
@@ -800,12 +1502,51 @@ async function salvarTarefa() {
   };
   if (!params.descricao) { alert('Preencha a descrição.'); return; }
   try {
-    const r = await api({ action:'addTarefa', ...params });
-    tarefas.push({ ID: r.id, ObraID:params.obraId, Descricao:params.descricao, Tipo:params.tipo, Responsavel:params.responsavel, DataLimite:params.dataLimite, Status:'Pendente', Observacoes:params.observacoes });
+    if (id) {
+      await api({ action:'updateTarefa', id, descricao:params.descricao, tipo:params.tipo, responsavel:params.responsavel, dataLimite:params.dataLimite, observacoes:params.observacoes });
+      const idx = tarefas.findIndex(t => t.ID === id);
+      if (idx >= 0) tarefas[idx] = { ...tarefas[idx], Descricao:params.descricao, Tipo:params.tipo, Responsavel:params.responsavel, DataLimite:params.dataLimite, Observacoes:params.observacoes };
+    } else {
+      const r = await api({ action:'addTarefa', ...params });
+      tarefas.push({ ID: r.id, ObraID:params.obraId, Descricao:params.descricao, Tipo:params.tipo, Responsavel:params.responsavel, DataLimite:params.dataLimite, Status:'Pendente', Observacoes:params.observacoes });
+    }
     fecharModal('modal-tarefa');
     renderHome();
-    if (currentPage === 'detail' && params.obraId === currentObraId) {
-      const obra = obras.find(o => o.ID === params.obraId);
+    const obraId = params.obraId;
+    if (currentPage === 'detail' && obraId === currentObraId) {
+      const obra = obras.find(o => o.ID === obraId);
+      if (obra) renderDetalheObra(obra);
+    }
+  } catch(e) { alert('Erro: ' + e.message); }
+}
+
+function editarTarefa(tarefaId) {
+  const t = tarefas.find(x => x.ID === tarefaId);
+  if (!t) return;
+  document.getElementById('tarefa-id-edit').value = t.ID;
+  document.getElementById('tarefa-obra-id').value = t.ObraID;
+  document.getElementById('tarefa-desc').value = t.Descricao || '';
+  document.getElementById('tarefa-tipo').value = t.Tipo || 'Administrativo';
+  document.getElementById('tarefa-data').value = t.DataLimite || '';
+  document.getElementById('tarefa-obs').value = t.Observacoes || '';
+  preencherSelects();
+  document.getElementById('tarefa-responsavel').value = t.Responsavel || 'Leonardo';
+  document.getElementById('tarefa-modal-title').textContent = 'Editar tarefa';
+  document.getElementById('btn-excluir-tarefa').style.display = 'block';
+  document.getElementById('modal-tarefa').classList.add('open');
+}
+
+async function excluirTarefa() {
+  const id = document.getElementById('tarefa-id-edit').value;
+  if (!id) return;
+  if (!confirm('Excluir esta tarefa? Não dá pra desfazer.')) return;
+  try {
+    await api({ action:'deleteTarefa', id });
+    tarefas = tarefas.filter(t => t.ID !== id);
+    fecharModal('modal-tarefa');
+    renderHome();
+    if (currentPage === 'detail' && currentObraId) {
+      const obra = obras.find(o => o.ID === currentObraId);
       if (obra) renderDetalheObra(obra);
     }
   } catch(e) { alert('Erro: ' + e.message); }
