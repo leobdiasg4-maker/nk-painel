@@ -295,6 +295,8 @@ function api(params) {
 
 async function carregarDados() {
   try {
+    document.getElementById('home-content').innerHTML = '<div class="loading">Iniciando...</div>';
+    await new Promise(r => setTimeout(r, 100));
     document.getElementById('home-content').innerHTML = '<div class="loading">Carregando obras...</div>';
     obras = await api({action:'getObras'});
     document.getElementById('home-content').innerHTML = '<div class="loading">Carregando tarefas...</div>';
@@ -591,7 +593,7 @@ function renderResponsaveis() {
   el.innerHTML = responsaveis.map(r =>
     '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;background:var(--surface2);border-radius:8px;margin-bottom:6px">'
     +'<span style="font-size:14px">'+r+'</span>'
-    +'<button onclick="removerResponsavel(''+r+'')" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:13px;padding:2px 6px">✕</button>'
+    +'<button onclick="removerResponsavel(this.dataset.nome)" data-nome="'+r+'" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:13px;padding:2px 6px">✕</button>'
     +'</div>'
   ).join('');
 }
@@ -610,7 +612,8 @@ async function adicionarResponsavel() {
   } catch(e) { alert('Erro: '+e.message); }
 }
 
-async function removerResponsavel(nome) {
+function removerResponsavel(btn) {
+  const nome = btn.dataset ? btn.dataset.nome : btn;
   if (!confirm('Remover "'+nome+'" da lista?')) return;
   responsaveis = responsaveis.filter(r => r !== nome);
   preencherSelects();
