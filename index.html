@@ -295,8 +295,12 @@ function api(params) {
 
 async function carregarDados() {
   try {
-    const [o, t, r] = await Promise.all([api({action:'getObras'}), api({action:'getAllTarefas'}), api({action:'getResponsaveis'})]);
-    obras = o; tarefas = t;
+    document.getElementById('home-content').innerHTML = '<div class="loading">Carregando obras...</div>';
+    obras = await api({action:'getObras'});
+    document.getElementById('home-content').innerHTML = '<div class="loading">Carregando tarefas...</div>';
+    tarefas = await api({action:'getAllTarefas'});
+    document.getElementById('home-content').innerHTML = '<div class="loading">Carregando responsáveis...</div>';
+    const r = await api({action:'getResponsaveis'});
     if (r && r.length) responsaveis = r;
     renderHome(); renderObras(); preencherSelects(); renderResponsaveis();
   } catch(e) {
